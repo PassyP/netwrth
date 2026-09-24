@@ -8,13 +8,13 @@ services:
       PROXY_AUTH_ADD: "false"
 
   web:
-    image: ghcr.io/passyp/netwrth:1.2.0
+    image: ghcr.io/passyp/netwrth:1.3.0
     restart: on-failure
     stop_grace_period: 1m
     environment:
       TZ: Europe/Amsterdam
       # getoond door /api/status, zodat je ziet welke versie er draait
-      APP_VERSION: "1.2.0"
+      APP_VERSION: "1.3.0"
       DATA_DIR: /data
       APP_SECRET: ${APP_SEED}
       # Umbrel mempool-app (vast IP uit haar exports.sh); alleen nodig voor Bitcoin-wallet-koppelingen, in de app te overschrijven

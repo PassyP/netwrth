@@ -2,16 +2,16 @@ manifestVersion: 1
 id: netwrth-app
 category: finance
 name: Netwrth
-version: "1.1.0"
+version: "1.2.0"
 tagline: Crypto, aandelen, ETF's, grondstoffen en vastgoed in één overzicht
 description: >-
   Persoonlijke portfolio-tracker in Delta-stijl. Live koersen via de eToro API en Yahoo Finance,
   ECB-wisselkoersen, winst/verlies per aankoop, allocatie, alerts en import van Swissquote/eToro-exports.
   Alle data blijft lokaal op je Umbrel.
 releaseNotes: >-
-  Allocatie: klik op een segment van de donut en zie waarde tegenover inleg van alleen dat deel, met de
-  nieuwe periode 5J. De tooltip van de grafiek toont nu ook het ongerealiseerde resultaat. Verder een
-  duidelijkere uitleg bij de Kraken-koppeling en bij .local-adressen voor een Bitcoin-node.
+  Pagina's laden veel sneller: de berekening van je posities en de grafiek blijft bewaard tot er iets
+  verandert, in plaats van bij elke paginalading opnieuw te gebeuren. Op het overzicht volgt de grafiek
+  waarde vs. inleg nu je filter op categorie of platform.
 developer: Netwrth
 website: https://github.com/PassyP/netwrth
 dependencies: []

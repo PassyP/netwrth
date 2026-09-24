@@ -5,7 +5,7 @@ import { useMemo, useState } from "react";
 import { Plus, AlertTriangle } from "lucide-react";
 import { useApi, useApp } from "./app-state";
 import { Card, Money, Gain, Skeleton, Empty, AssetLogo, RangePills, Price, Qty, Pct, colorFor, timeAgo } from "./ui";
-import { ValueChart, Donut, HISTORY_RANGES, type HistoryPointView, type HistoryRange } from "./charts";
+import { ValueChart, Donut, SegmentChip, HISTORY_RANGES, type HistoryPointView, type HistoryRange } from "./charts";
 import { TransactionForm } from "./transaction-form";
 import type { ConnectionRow } from "./connections";
 import type { PortfolioView, PositionView } from "@/lib/portfolio";
@@ -18,11 +18,13 @@ export function Overview() {
   const pid = portfolioId == null ? "all" : String(portfolioId);
   const { data, error } = useApi<PortfolioView>(`/api/portfolio?portfolioId=${pid}`);
   const [range, setRange] = useState<HistoryRange>("Alles");
-  const { data: history } = useApi<HistoryPointView[]>(`/api/history?portfolioId=${pid}&range=${range}`);
-  const { data: connections } = useApi<ConnectionRow[]>("/api/connections");
-  const linkedPlatforms = useMemo(() => new Set((connections ?? []).map((c) => c.platformId)), [connections]);
   const [category, setCategory] = useState<string | null>(null);
   const [platform, setPlatform] = useState<number | null>(null);
+  // de grafiek volgt dezelfde filters als de posities (categorie via chip of donut, platform via chip)
+  const historyFilter = `${category ? `&category=${encodeURIComponent(category)}` : ""}${platform ? `&platform=${platform}` : ""}`;
+  const { data: history, loading: historyLoading } = useApi<HistoryPointView[]>(`/api/history?portfolioId=${pid}&range=${range}${historyFilter}`);
+  const { data: connections } = useApi<ConnectionRow[]>("/api/connections");
+  const linkedPlatforms = useMemo(() => new Set((connections ?? []).map((c) => c.platformId)), [connections]);
   const [showForm, setShowForm] = useState(false);
 
   const [showDust, setShowDust] = useState(false);
@@ -59,6 +61,8 @@ export function Overview() {
 
   const t = data?.totals;
   const filtered = category || platform;
+  // naast de grafiektitel: wat er gefilterd is, bijv. "Crypto · Kraken"
+  const filterLabel = [category && (CATEGORY_LABELS[category] ?? category), platform && platformsPresent.find(([id]) => id === platform)?.[1]].filter(Boolean).join(" · ");
   const sum = (key: "value" | "netValue" | "unrealized" | "dayChange") => positions.reduce((s, p) => s + Number(p[key][currency]), 0);
   const cash = (data?.cash ?? []).filter((c) => !dustHidden || !isDust(c.amount));
 
@@ -136,8 +140,20 @@ export function Overview() {
 
       {/* Grafiek + allocatie */}
       <div className="grid gap-4 lg:grid-cols-5">
-        <Card className="lg:col-span-3" title="Waarde vs. inleg" action={<RangePills value={range} options={HISTORY_RANGES} onChange={setRange} />}>
-          {history ? <ValueChart points={history} legend /> : <Skeleton className="h-60" />}
+        <Card
+          className="lg:col-span-3"
+          title="Waarde vs. inleg"
+          titleExtra={filtered ? <SegmentChip label={filterLabel} color={category ? CATEGORY_COLORS[category] : undefined} /> : undefined}
+          action={<RangePills value={range} options={HISTORY_RANGES} onChange={setRange} />}
+        >
+          {history ? (
+            // bij een ander filter of een andere periode blijft de vorige lijn staan tot de nieuwe binnen is
+            <div className={`transition-opacity ${historyLoading ? "opacity-60" : ""}`}>
+              <ValueChart points={history} legend />
+            </div>
+          ) : (
+            <Skeleton className="h-60" />
+          )}
         </Card>
         <Card className="lg:col-span-2" title="Allocatie" action={<Link href="/allocation" className="tap text-xs font-semibold text-accent">Alles</Link>}>
           {data ? <Donut slices={data.allocation.byCategory} colorKey="category" selected={category} onSelect={(k) => setCategory(k)} layout="column" /> : <Skeleton className="h-48" />}

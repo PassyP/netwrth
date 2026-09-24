@@ -22,6 +22,16 @@ export function sliceColor(key: string, index: number, colorKey: "index" | "cate
   return colorKey === "category" ? CATEGORY_COLORS[key] ?? PALETTE[index % PALETTE.length] : PALETTE[index % PALETTE.length];
 }
 
+/** Welk deel van het portfolio een grafiek toont, naast de kaarttitel; in gewone letters, want die titel staat in hoofdletters. */
+export function SegmentChip({ label, color }: { label: string; color?: string }) {
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-bg-elev px-2.5 py-0.5 text-xs font-semibold normal-case tracking-normal text-text">
+      {color && <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: color }} />}
+      {label}
+    </span>
+  );
+}
+
 function compact(n: number, ccy: string): string {
   const abs = Math.abs(n);
   const sym = currencySymbol(ccy);

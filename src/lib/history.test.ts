@@ -99,20 +99,25 @@ describe("computeHistory per allocatiesegment", () => {
     const all = computeHistory(portfolioId);
     engine.mockClear();
 
-    const onlyAapl = computeHistory(portfolioId, undefined, { by: "asset", key: String(aapl) });
+    const onlyAapl = computeHistory(portfolioId, undefined, { asset: String(aapl) });
     expect(onlyAapl[0].date).toBe("2026-01-05");
     expect(last(onlyAapl).invested.EUR).toBe("310.00"); // 200 + 110
     expect(last(onlyAapl).value.EUR).toBe("390.00"); // 3 × 130
-    const onlyMsft = computeHistory(portfolioId, undefined, { by: "asset", key: String(msft) });
+    const onlyMsft = computeHistory(portfolioId, undefined, { asset: String(msft) });
     expect(onlyMsft[0].date).toBe("2026-01-10"); // begint bij de eerste transactie van het segment
     expect(last(onlyMsft).invested.EUR).toBe("100.00");
-    expect(computeHistory(portfolioId, "2026-02-15", { by: "asset", key: String(msft) })[0].date).toBe("2026-02-15");
+    expect(computeHistory(portfolioId, "2026-02-15", { asset: String(msft) })[0].date).toBe("2026-02-15");
 
     // beide aandelen, één platform, allebei in euro: categorie, platform en valuta omvatten hier alles
-    expect(computeHistory(portfolioId, undefined, { by: "category", key: "stock" })).toEqual(all);
-    expect(computeHistory(portfolioId, undefined, { by: "platform", key: String(platformId) })).toEqual(all);
-    expect(computeHistory(portfolioId, undefined, { by: "currency", key: "EUR" })).toEqual(all);
-    expect(computeHistory(portfolioId, undefined, { by: "category", key: "crypto" })).toEqual([]);
+    expect(computeHistory(portfolioId, undefined, { category: "stock" })).toEqual(all);
+    expect(computeHistory(portfolioId, undefined, { platform: String(platformId) })).toEqual(all);
+    expect(computeHistory(portfolioId, undefined, { currency: "EUR" })).toEqual(all);
+    expect(computeHistory(portfolioId, undefined, { category: "crypto" })).toEqual([]);
+
+    // filters van het overzicht samen (categorie én platform), of een asset binnen een categorie
+    expect(computeHistory(portfolioId, undefined, { category: "stock", platform: String(platformId) })).toEqual(all);
+    expect(last(computeHistory(portfolioId, undefined, { category: "stock", asset: String(msft) })).invested.EUR).toBe("100.00");
+    expect(computeHistory(portfolioId, undefined, { category: "crypto", platform: String(platformId) })).toEqual([]);
 
     // geen nieuwe lot-berekening, en het totaalbeeld komt daarna nog steeds uit de cache
     expect(computeHistory(portfolioId)).toEqual(all);

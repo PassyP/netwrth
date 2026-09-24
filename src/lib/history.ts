@@ -14,26 +14,19 @@ export interface HistoryPoint {
 }
 
 /**
- * Eén segment van de allocatie: `key` is de sleutel van dat segment (categorie, platform-id, valuta van het asset of
- * asset-id), zodat de grafiek precies de posities volgt die bij een aangeklikt stuk van de donut horen.
+ * Deel van het portfolio voor de grafiek, met dezelfde sleutels als de allocatie: categorie, platform-id, valuta van
+ * het asset en asset-id. Een aangeklikt segment van de donut is één veld; de filters van het overzicht (categorie en
+ * platform) mogen samen, en tellen dan allebei.
  */
 export const HISTORY_FILTERS = ["category", "platform", "currency", "asset"] as const;
-export interface HistoryFilter {
-  by: (typeof HISTORY_FILTERS)[number];
-  key: string;
-}
+export type HistoryFilter = Partial<Record<(typeof HISTORY_FILTERS)[number], string>>;
 
 function inFilter(filter: HistoryFilter, t: Transaction, asset: Asset | undefined): boolean {
-  switch (filter.by) {
-    case "category":
-      return asset?.category === filter.key;
-    case "platform":
-      return String(t.platformId) === filter.key;
-    case "currency":
-      return asset?.currency === filter.key;
-    case "asset":
-      return String(t.assetId) === filter.key;
-  }
+  if (filter.category != null && asset?.category !== filter.category) return false;
+  if (filter.platform != null && String(t.platformId) !== filter.platform) return false;
+  if (filter.currency != null && asset?.currency !== filter.currency) return false;
+  if (filter.asset != null && String(t.assetId) !== filter.asset) return false;
+  return true;
 }
 
 const ZERO = new Decimal(0);
@@ -110,7 +103,7 @@ function cachedTimelines(portfolioId: number | null, method: CostMethod, groups:
 /**
  * Waarde en inleg per dag, berekend uit transacties, dagslotkoersen en ECB-koersen.
  * Inleg = kostprijs van de open lots op die dag (historische wisselkoers, of koers van de dag bij ignoreFx).
- * Met `filter` alleen de groepen van één allocatiesegment; de reeks begint dan bij de eerste transactie daarvan.
+ * Met `filter` alleen de groepen die daaraan voldoen; de reeks begint dan bij de eerste transactie daarvan.
  */
 export function computeHistory(portfolioId: number | null, fromDay?: string, filter?: HistoryFilter): HistoryPoint[] {
   const db = getDb();

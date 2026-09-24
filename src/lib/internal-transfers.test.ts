@@ -7,7 +7,7 @@ process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "pm-transfers-"));
 
 import { getDb, schema } from "./db";
 import { computePortfolio } from "./portfolio";
-import { computeHistory } from "./history";
+import { computeHistory, type HistoryFilter } from "./history";
 
 const day = (d: string, t = "10:00:00") => `${d}T${t}.000Z`;
 
@@ -65,15 +65,15 @@ describe("overboekingen tussen eigen platforms in het portfolio", () => {
   });
 
   it("de grafiek per allocatiesegment: de wallet houdt de meegenomen kostprijs, beide platforms samen zijn het totaal", () => {
-    const end = (by: "category" | "platform" | "currency" | "asset", key: string) => computeHistory(null, undefined, { by, key }).at(-1)!;
-    expect(end("platform", String(cold)).invested.EUR).toBe("40008.00");
-    expect(end("platform", String(kraken)).invested.EUR).toBe("29992.00");
-    expect(computeHistory(null, undefined, { by: "platform", key: String(cold) })[0].date).toBe("2024-02-01"); // vanaf de eerste ontvangst
-    expect(end("asset", String(btc)).invested.EUR).toBe("70000.00");
-    expect(end("category", "crypto").invested.EUR).toBe("70000.00");
+    const end = (filter: HistoryFilter) => computeHistory(null, undefined, filter).at(-1)!;
+    expect(end({ platform: String(cold) }).invested.EUR).toBe("40008.00");
+    expect(end({ platform: String(kraken) }).invested.EUR).toBe("29992.00");
+    expect(computeHistory(null, undefined, { platform: String(cold) })[0].date).toBe("2024-02-01"); // vanaf de eerste ontvangst
+    expect(end({ asset: String(btc) }).invested.EUR).toBe("70000.00");
+    expect(end({ category: "crypto" }).invested.EUR).toBe("70000.00");
     // valuta van het asset (zoals de allocatie), niet die van de transacties
-    expect(end("currency", "USD").invested.EUR).toBe("70000.00");
-    expect(computeHistory(null, undefined, { by: "currency", key: "EUR" })).toEqual([]);
+    expect(end({ currency: "USD" }).invested.EUR).toBe("70000.00");
+    expect(computeHistory(null, undefined, { currency: "EUR" })).toEqual([]);
   });
 
   it("zonder tegenpartij (opname weggehaald) valt de ontvangst terug op dagkoers", () => {

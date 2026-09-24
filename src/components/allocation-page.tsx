@@ -4,11 +4,11 @@ import { useState } from "react";
 import Link from "next/link";
 import { useApi, useApp } from "./app-state";
 import { Card, Empty, Skeleton, Money, Gain, RangePills, type MoneyPair } from "./ui";
-import { Donut, ValueChart, HISTORY_RANGES, sliceColor, type HistoryPointView, type HistoryRange } from "./charts";
+import { Donut, ValueChart, SegmentChip, HISTORY_RANGES, sliceColor, type HistoryPointView, type HistoryRange } from "./charts";
 import { dustAmount, isDust } from "@/lib/format";
 import type { PortfolioView, PositionView } from "@/lib/portfolio";
 
-// `filter` is hetzelfde segment in /api/history (HistoryFilter in lib/history.ts), `noun` staat in de uitleg
+// `filter` is de parameter van hetzelfde segment in /api/history (HistoryFilter in lib/history.ts), `noun` staat in de uitleg
 const VIEWS = [
   { key: "byCategory", label: "Categorie", filter: "category", noun: "categorie" },
   { key: "byPlatform", label: "Platform", filter: "platform", noun: "platform" },
@@ -34,7 +34,7 @@ export function AllocationPage() {
   const [range, setRange] = useState<HistoryRange>("Alles");
   const viewDef = VIEWS.find((v) => v.key === view)!;
   // waarde vs. inleg van het aangeklikte segment; zonder selectie het hele portfolio, zoals op het overzicht
-  const segment = selected ? `&by=${viewDef.filter}&key=${encodeURIComponent(selected)}` : "";
+  const segment = selected ? `&${viewDef.filter}=${encodeURIComponent(selected)}` : "";
   const { data: history, loading: historyLoading } = useApi<HistoryPointView[]>(`/api/history?portfolioId=${pid}&range=${range}${segment}`);
 
   if (error) return <Empty title="Kon allocatie niet laden">{error}</Empty>;
@@ -160,15 +160,5 @@ function Stat({ label, className = "", children }: { label: string; className?: 
       <div className="text-xs text-muted">{label}</div>
       <div className="mt-0.5 text-base font-semibold tnum">{children}</div>
     </div>
-  );
-}
-
-/** Het getoonde segment naast de kaarttitel, in gewone letters (de titel zelf staat in hoofdletters). */
-function SegmentChip({ label, color }: { label: string; color?: string }) {
-  return (
-    <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-bg-elev px-2.5 py-0.5 text-xs font-semibold normal-case tracking-normal text-text">
-      {color && <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: color }} />}
-      {label}
-    </span>
   );
 }

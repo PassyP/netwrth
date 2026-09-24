@@ -1,18 +1,18 @@
 import { handler, json, parsePortfolioId } from "@/lib/api";
-import { ApiError } from "@/lib/errors";
 import { computeHistory, HISTORY_FILTERS, type HistoryFilter } from "@/lib/history";
 import { shiftDays } from "@/lib/prices/fx";
 import { awaitHistoryCoverage } from "@/lib/prices/quotes";
 
 const RANGES: Record<string, number | null> = { "1D": 1, "1W": 7, "1M": 30, "3M": 91, "1J": 365, "5J": 1826, Alles: null };
 
-/** ?by=category|platform|currency|asset&key=… (de sleutel van een allocatiesegment); zonder `by` het hele portfolio. */
+/** ?category=…&platform=…&currency=…&asset=… (sleutels zoals in de allocatie, samen = en); zonder filter het hele portfolio. */
 function parseFilter(params: URLSearchParams): HistoryFilter | undefined {
-  const by = params.get("by");
-  if (by == null) return undefined;
-  const key = params.get("key");
-  if (!(HISTORY_FILTERS as readonly string[]).includes(by) || !key) throw new ApiError("Ongeldig filter voor de historie");
-  return { by: by as HistoryFilter["by"], key };
+  const filter: HistoryFilter = {};
+  for (const k of HISTORY_FILTERS) {
+    const v = params.get(k);
+    if (v) filter[k] = v;
+  }
+  return Object.keys(filter).length > 0 ? filter : undefined;
 }
 
 export const GET = handler(async (req) => {

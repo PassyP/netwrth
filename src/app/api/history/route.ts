@@ -1,6 +1,7 @@
 import { handler, json, parsePortfolioId } from "@/lib/api";
 import { ApiError } from "@/lib/errors";
 import { computeHistory, HISTORY_FILTERS, type HistoryFilter } from "@/lib/history";
+import { rangeDays } from "@/lib/history-ranges";
 import { shiftDays } from "@/lib/prices/fx";
 import { awaitHistoryCoverage } from "@/lib/prices/quotes";
 
@@ -19,7 +20,7 @@ export const GET = handler(async (req) => {
   const params = new URL(req.url).searchParams;
   const range = params.get("range") ?? "Alles";
   const filter = parseFilter(params);
-  const days = RANGES[range] ?? null;
+  const days = rangeDays(RANGES, range, null);
   const today = new Date().toISOString().slice(0, 10);
   const from = days == null ? undefined : shiftDays(today, -days);
   // Oudere koersen tot de eerste transactie eenmalig via Yahoo aanvullen (daarna staan ze in de database en kost dit

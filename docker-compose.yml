@@ -1,0 +1,15 @@
+services:
+  netwrth:
+    build: .
+    image: netwrth:latest
+    container_name: netwrth
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - TZ=Europe/Amsterdam
+      - DATA_DIR=/data
+      # Optioneel: vast geheim voor het versleutelen van de API-keys (anders wordt /data/secret.key aangemaakt)
+      # - APP_SECRET=vervang-dit-door-een-lange-willekeurige-string
+    volumes:
+      - ./data:/data

@@ -1,0 +1,1 @@
+ALTER TABLE `connections` ADD `receipt_cost` text DEFAULT 'market' NOT NULL;

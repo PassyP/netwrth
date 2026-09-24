@@ -1,0 +1,23 @@
+manifestVersion: 1
+id: netwrth-app
+category: finance
+name: Netwrth
+version: "1.0.0"
+tagline: Crypto, aandelen, ETF's, grondstoffen en vastgoed in één overzicht
+description: >-
+  Persoonlijke portfolio-tracker in Delta-stijl. Live koersen via de eToro API en Yahoo Finance,
+  ECB-wisselkoersen, winst/verlies per aankoop, allocatie, alerts en import van Swissquote/eToro-exports.
+  Alle data blijft lokaal op je Umbrel.
+developer: Netwrth
+website: https://github.com/PassyP/netwrth
+dependencies: []
+repo: https://github.com/PassyP/netwrth
+support: https://github.com/PassyP/netwrth/issues
+port: 3380
+icon: https://raw.githubusercontent.com/PassyP/netwrth/main/public/icon-512.png
+gallery: []
+path: ""
+defaultUsername: ""
+defaultPassword: ""
+submitter: Netwrth
+submission: https://github.com/PassyP/netwrth

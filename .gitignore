@@ -1,0 +1,29 @@
+node_modules
+.next
+out
+/data/
+*.log
+.env
+.env.*
+!.env.example
+.DS_Store
+
+# build- en testartefacten
+*.tsbuildinfo
+next-env.d.ts
+test-results/
+playwright-report/
+
+# lokale Claude-configuratie en sessie-uitvoer (screenshots met portfoliodata)
+.claude/
+Claude outputs/
+
+# persoonlijke exports, databases en sleutels horen niet in git
+/Positions_*.xlsx
+/Etoro.rtf
+*.db
+*.db-shm
+*.db-wal
+*.db.backup*
+*.sqlite*
+secret.key

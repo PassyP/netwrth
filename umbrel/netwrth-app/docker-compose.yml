@@ -1,0 +1,21 @@
+version: "3.7"
+
+services:
+  app_proxy:
+    environment:
+      APP_HOST: netwrth-app_web_1
+      APP_PORT: 3000
+      PROXY_AUTH_ADD: "false"
+
+  web:
+    image: ghcr.io/passyp/netwrth:1.0.0
+    restart: on-failure
+    stop_grace_period: 1m
+    environment:
+      TZ: Europe/Amsterdam
+      DATA_DIR: /data
+      APP_SECRET: ${APP_SEED}
+      # Umbrel mempool-app (vast IP uit haar exports.sh); alleen nodig voor Bitcoin-wallet-koppelingen, in de app te overschrijven
+      BITCOIN_API_URL: http://10.21.21.26:3006
+    volumes:
+      - ${APP_DATA_DIR}/data:/data

@@ -579,18 +579,35 @@ export function ConnectionWizard({ open, onClose, onDone, initial }: { open: boo
       )}
       {step === 2 && !isWallet && (
         <div className="space-y-3">
-          <p className="text-sm text-muted">
-            {provider === "kraken" ? (
+          <div className="space-y-2 text-sm text-muted">
+            {/* precies de rechten van de drie endpoints die de koppeling aanroept: Balance, TradesHistory en Ledgers */}
+            {provider === "kraken" && (
               <>
-                Maak bij Kraken (Security → API) een key met alleen <b>Query funds</b>, <b>Query closed orders &amp; trades</b> en <b>Query ledger entries</b>.
+                <p>Maak in Kraken Pro (Instellingen → API) een API-key en vink bij de rechten alleen deze drie aan:</p>
+                <ul className="list-disc space-y-0.5 pl-4">
+                  <li>
+                    <b>Query Funds</b> voor de saldi
+                  </li>
+                  <li>
+                    <b>Query Closed Orders &amp; Trades</b> voor je trades
+                  </li>
+                  <li>
+                    <b>Query Ledger Entries</b> voor stortingen, opnames, staking en overige mutaties
+                  </li>
+                </ul>
               </>
-            ) : (
-              <>Gebruik eToro-keys met alleen leesrechten (Read).</>
-            )}{" "}
-            <a href={p?.helpUrl} target="_blank" rel="noreferrer" className="text-accent">
-              Open {p?.label}
-            </a>
-          </p>
+            )}
+            <p>
+              {provider === "kraken" ? (
+                <>Andere rechten zijn niet nodig: de app leest alleen. Laat de overige instellingen op standaard; met een start- of einddatum mist de app een deel van je historie.</>
+              ) : (
+                <>Gebruik eToro-keys met alleen leesrechten (Read).</>
+              )}{" "}
+              <a href={p?.helpUrl} target="_blank" rel="noreferrer" className="text-accent">
+                Open {p?.label}
+              </a>
+            </p>
+          </div>
           {provider === "etoro" && sharedPresent && (
             <div className="grid gap-2 sm:grid-cols-2">
               <ChoiceCard selected={f.keySource === "shared"} onSelect={() => setF({ ...f, keySource: "shared" })} title="Gedeelde koers-keys gebruiken">

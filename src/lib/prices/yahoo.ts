@@ -36,6 +36,7 @@ interface ChartResponse {
         chartPreviousClose?: number;
         previousClose?: number;
         regularMarketTime?: number;
+        gmtoffset?: number; // seconden t.o.v. UTC in de tijdzone van de beurs (0 bij crypto)
         longName?: string;
         shortName?: string;
         dataGranularity?: string; // 1d, 1wk, 1mo …: wat Yahoo werkelijk leverde
@@ -46,6 +47,8 @@ interface ChartResponse {
     error: { code: string; description: string } | null;
   };
 }
+
+type ChartResult = NonNullable<ChartResponse["chart"]["result"]>[number];
 
 async function chart(symbol: string, params: Record<string, string>): Promise<ChartResponse["chart"]["result"]> {
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?${new URLSearchParams(params)}`;
@@ -65,16 +68,38 @@ export async function getQuote(symbol: string): Promise<YahooQuote> {
   const closes = (r.indicators?.quote?.[0]?.close ?? []).filter((c): c is number => typeof c === "number");
   const price = meta.regularMarketPrice ?? closes[closes.length - 1];
   if (price == null) throw new Error(`Yahoo: geen koers voor ${symbol}`);
-  const prev = meta.chartPreviousClose ?? meta.previousClose ?? (closes.length > 1 ? closes[closes.length - 2] : null);
+  const time = meta.regularMarketTime ?? Math.floor(Date.now() / 1000);
+  const prev = previousSessionClose(r, time);
   return {
     symbol: meta.symbol,
     price: price * factor,
     previousClose: prev != null ? prev * factor : null,
     currency,
-    time: new Date((meta.regularMarketTime ?? Math.floor(Date.now() / 1000)) * 1000).toISOString(),
+    time: new Date(time * 1000).toISOString(),
     name: meta.longName ?? meta.shortName,
     exchange: meta.exchangeName,
   };
+}
+
+/**
+ * Slot van de laatste handelsdag vóór de sessie van de koers (de dag van `time`, regularMarketTime): de laatste
+ * dagcandle met een slot op een eerdere dag. meta.chartPreviousClose is de slot vóór het héle venster, bij range=5d vijf
+ * handelsdagen terug, en telt pas (na meta.previousClose) als het venster geen eerdere slot heeft. Een lege slot (null,
+ * levert Yahoo soms midden in de reeks) wordt overgeslagen: dan geldt de dag daarvoor. Dagen tellen in de tijdzone van
+ * de beurs (gmtoffset): in Sydney opent een candle in UTC nog op de avond ervoor. Crypto handelt 24/7 met candles om
+ * 00:00 UTC, dus daar is het de slot van gisteren (UTC), net als de open van vandaag bij Kraken.
+ */
+function previousSessionClose(r: ChartResult, time: number): number | null {
+  const ts = r.timestamp ?? [];
+  const closes = r.indicators?.quote?.[0]?.close ?? [];
+  const offset = r.meta.gmtoffset ?? 0;
+  const dayOf = (t: number) => new Date((t + offset) * 1000).toISOString().slice(0, 10);
+  const session = dayOf(time);
+  for (let i = ts.length - 1; i >= 0; i--) {
+    const c = closes[i];
+    if (typeof c === "number" && dayOf(ts[i]) < session) return c;
+  }
+  return r.meta.previousClose ?? r.meta.chartPreviousClose ?? null;
 }
 
 export async function getDailyHistory(symbol: string, range = "1y"): Promise<{ currency: string; candles: YahooCandle[] }> {
@@ -100,7 +125,7 @@ export async function getDailyHistoryBetween(symbol: string, fromDay: string, to
   return toCandles(r);
 }
 
-function toCandles(r: NonNullable<ChartResponse["chart"]["result"]>[number]): { currency: string; candles: YahooCandle[] } {
+function toCandles(r: ChartResult): { currency: string; candles: YahooCandle[] } {
   const { currency, factor } = normalizeCurrency(r.meta.currency);
   const ts = r.timestamp ?? [];
   const closes = r.indicators?.quote?.[0]?.close ?? [];

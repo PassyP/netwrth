@@ -84,13 +84,34 @@ export function quoteOnOrBefore(assetId: number, day: string): PriceQuote | null
   );
 }
 
-/** Vorige dagslot: het previous_close-veld van de laatste quote, anders de rij van de dag ervoor (alleen in dezelfde valuta). */
-export function previousClose(assetId: number): string | null {
+/**
+ * Vorige dagslot: het previous_close-veld van de laatste quote, anders de koers van de rij ervoor. Die terugval geldt
+ * alleen als de laatste rij van vandaag is en de rij ervoor van de vorige handelsdag (zie isNextSession), in dezelfde
+ * valuta. Anders gaf een handmatige koers of vastgoedwaardering elke dag, maandenlang, het verschil met de waardering
+ * daarvoor als verandering van vandaag.
+ */
+export function previousClose(assetId: number, today = new Date().toISOString().slice(0, 10)): string | null {
   const latest = latestQuote(assetId);
   if (!latest) return null;
   if (latest.previousClose) return latest.previousClose;
+  if (latest.day < today) return null;
   const rows = getDb().select().from(schema.priceQuotes).where(eq(schema.priceQuotes.assetId, assetId)).orderBy(desc(schema.priceQuotes.day)).limit(2).all();
-  return rows.length > 1 && rows[1].currency === latest.currency ? rows[1].price : null;
+  const prev = rows[1];
+  return prev && prev.currency === latest.currency && isNextSession(prev.day, latest.day) ? prev.price : null;
+}
+
+/**
+ * Volgt `day` als handelsdag op `prevDay` (YYYY-MM-DD)? Ja bij hoogstens één werkdag ertussen (een feestdag), een
+ * weekend niet meegeteld: do → vr, vr → ma, vr → di, do → ma en za → zo wel; do → di (Pasen) of een week later niet.
+ */
+export function isNextSession(prevDay: string, day: string): boolean {
+  if (prevDay >= day) return false;
+  let skipped = 0;
+  for (let d = shiftDays(prevDay, 1); d < day; d = shiftDays(d, 1)) {
+    const weekday = new Date(`${d}T00:00:00Z`).getUTCDay();
+    if (weekday !== 0 && weekday !== 6 && ++skipped > 1) return false;
+  }
+  return true;
 }
 
 export function quoteHistory(assetId: number, fromDay: string): PriceQuote[] {

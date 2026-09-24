@@ -10,7 +10,7 @@ import { TransactionForm, isoToLocal, type TxDraft } from "./transaction-form";
 import type { PositionView } from "@/lib/portfolio";
 import { CATEGORY_LABELS, TX_TYPE_LABELS, dustAmount, dustLabel, formatDate, isDust, priceSourceLabel } from "@/lib/format";
 
-const RANGES = ["1W", "1M", "3M", "1J", "Alles"] as const;
+const RANGES = ["1W", "1M", "3M", "1J", "5J", "Alles"] as const;
 // transacties per keer: bij bijv. BTC via een exchange-koppeling lopen er honderden onder één asset
 const TX_PAGE = 25;
 

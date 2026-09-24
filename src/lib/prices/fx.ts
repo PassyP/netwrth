@@ -215,10 +215,10 @@ export function fxOnDateSync(currency: string, date: string): { fxEur: Decimal; 
  * 1 eenheid transactievaluta in BTC op de transactiedatum, uit de opgeslagen fxEur en de BTC-reeks. Niet in de
  * transactie opgeslagen maar bij het laden berekend: zo werken bestaande transacties zonder migratie.
  */
-export function btcFactor(fxEur: string | null, currency: string, isoDate: string): string | null {
+export function btcFactor(fxEur: string | null, currency: string, isoDate: string, btcRateOn: (date: string) => Decimal | null = (date) => ratePerEurSync(BTC, date)): string | null {
   if (currency === BTC) return "1";
   const eur = currency === "EUR" ? new Decimal(1) : fxEur != null ? new Decimal(fxEur) : null;
-  const rBtc = ratePerEurSync(BTC, isoDate.slice(0, 10));
+  const rBtc = btcRateOn(isoDate.slice(0, 10));
   if (!eur || !rBtc) return null;
   return eur.mul(rBtc).toFixed(18);
 }

@@ -1,9 +1,8 @@
-import Decimal from "decimal.js";
 import { eq } from "drizzle-orm";
 import { getDb, schema } from "./db";
 import type { Asset, Transaction } from "./db/schema";
-import { processTransactions, type CostMethod, type EngineTx, type PositionStep } from "./calc/engine";
-import { loadTransactions, toEngineTx, computePortfolio, isBitcoin, linkedEngineTxs, type Money } from "./portfolio";
+import type { EngineTx } from "./calc/engine";
+import { loadTransactions, toEngineTx, computePortfolio, isBitcoin, linkedEngineTxs, engineRuns, type Money } from "./portfolio";
 import { getSettings } from "./settings";
 import { BTC, shiftDays } from "./prices/fx";
 
@@ -29,7 +28,10 @@ function inFilter(filter: HistoryFilter, t: Transaction, asset: Asset | undefine
   return true;
 }
 
-const ZERO = new Decimal(0);
+/** Bedrag met vaste decimalen; een heel klein negatief getal uit de afronding wordt geen "-0.00". */
+function fixed(v: number, digits: number): string {
+  return (Math.abs(v) < 0.5 / 10 ** digits ? 0 : v).toFixed(digits);
+}
 
 function todayStr(): string {
   return new Date().toISOString().slice(0, 10);
@@ -48,56 +50,6 @@ function lastOnOrBefore<T extends { day: string }>(arr: T[], day: string): T | n
     } else hi = mid - 1;
   }
   return ans;
-}
-
-interface CachedTimeline {
-  version: string;
-  steps: PositionStep[];
-}
-
-/**
- * Tijdlijnen per groep (asset+platform) in het geheugen van het proces. De lot-berekening is verreweg het duurste deel
- * van een historie-verzoek (honderden ms bij honderden verkopen met gemiddelde kostprijs), terwijl de uitkomst alleen
- * afhangt van de transacties in de groep, de kostprijsmethode en de BTC-reeks. Sleutel: bereik (portfolio of alles) en
- * methode; per groep een versie met precies de velden die de rekenkern ziet, zodat elke toevoeging, wijziging of
- * verwijdering van een transactie alleen die groep opnieuw laat berekenen. De stappen zijn onveranderlijk en worden
- * tussen verzoeken gedeeld; lezers mogen ze niet wijzigen.
- */
-const timelineCache = new Map<string, Map<string, CachedTimeline>>();
-
-/**
- * Versie van een groep: de transactievelden die toEngineTx doorgeeft, op id gesorteerd. fxBtc staat niet in de
- * transactie maar wordt bij het laden uit fxEur, valuta, datum en de BTC-reeks berekend (btcFactor); daarom telt de
- * BTC-reeks als geheel mee (fxBtcVersion) in plaats van per transactie een koers op te zoeken, wat ~100 ms per verzoek
- * kostte. Verandert een BTC-koers, dan worden alle groepen opnieuw berekend.
- */
-function timelineVersion(txs: EngineTx[], fxBtcVersion: string): string {
-  // engine-invoer, dus inclusief de meegenomen kostprijs van een interne overboeking (die hangt af van andere groepen)
-  const rows = txs
-    .slice()
-    .sort((a, b) => a.id - b.id)
-    .map((t) => [t.id, t.type, t.quantity, t.price, t.fee, t.currency, t.executedAt, t.fxEur, t.fxUsd, t.fxBtc ?? "", t.internal ? "i" : ""].join("|"));
-  return `${fxBtcVersion}\n${rows.join("\n")}`;
-}
-
-function cachedTimelines(portfolioId: number | null, method: CostMethod, groups: Map<string, EngineTx[]>, fxBtcVersion: string): Map<string, PositionStep[]> {
-  const scope = `${portfolioId ?? "all"}|${method}`;
-  const known = timelineCache.get(scope);
-  const kept = new Map<string, CachedTimeline>();
-  const timelines = new Map<string, PositionStep[]>();
-  for (const [k, list] of groups) {
-    const version = timelineVersion(list, fxBtcVersion);
-    let entry = known?.get(k);
-    if (!entry || entry.version !== version) {
-      const steps: PositionStep[] = [];
-      processTransactions(list, method, (st) => steps.push(st));
-      entry = { version, steps };
-    }
-    kept.set(k, entry);
-    timelines.set(k, entry.steps);
-  }
-  timelineCache.set(scope, kept); // groepen die niet meer voorkomen (verwijderd, ander portfolio) vallen weg
-  return timelines;
 }
 
 /**
@@ -120,41 +72,40 @@ export function computeHistory(portfolioId: number | null, fromDay?: string, fil
     groups.get(k)!.push(t);
   }
   for (const list of groups.values()) list.sort((a, b) => (a.executedAt < b.executedAt ? -1 : 1));
-  // De groepen die in de grafiek meetellen. De tijdlijnen worden wel voor alle groepen opgevraagd (cachedTimelines
-  // bewaart per bereik alleen wat je meegeeft), zodat een gefilterde grafiek de cache van het totaalbeeld niet leegt.
+  // De groepen die in de grafiek meetellen. De tijdlijnen worden wel voor alle groepen opgevraagd (engineRuns bewaart
+  // per bereik alleen wat je meegeeft), zodat een gefilterde grafiek de cache van het totaalbeeld niet leegt.
   const shown = filter ? new Map([...groups].filter(([, list]) => inFilter(filter, list[0], assets.get(list[0].assetId!)))) : groups;
   if (shown.size === 0) return [];
   const shownAssets = new Set([...shown.values()].map((list) => list[0].assetId!));
 
-  // koersen per asset
-  const quotes = new Map<number, { day: string; price: Decimal; currency: string }[]>();
+  // Koersen, schulden en wisselkoersen als gewone getallen: de dag-loop rekent voor elke dag en elke groep, en met Decimal
+  // was dat bij jaren historie het grootste deel van een verzoek. Voor een grafiek is een double ruim precies genoeg (de
+  // bedragen gaan met 2 of 8 decimalen de deur uit); de lot-berekening zelf (engineRuns) blijft exact.
+  const quotes = new Map<number, { day: string; price: number; currency: string }[]>();
   for (const assetId of shownAssets) {
-    const rows = db.select().from(schema.priceQuotes).where(eq(schema.priceQuotes.assetId, assetId)).orderBy(schema.priceQuotes.day).all();
-    quotes.set(assetId, rows.map((r) => ({ day: r.day, price: new Decimal(r.price), currency: r.currency })));
+    const rows = db
+      .select({ day: schema.priceQuotes.day, price: schema.priceQuotes.price, currency: schema.priceQuotes.currency })
+      .from(schema.priceQuotes)
+      .where(eq(schema.priceQuotes.assetId, assetId))
+      .orderBy(schema.priceQuotes.day)
+      .all();
+    quotes.set(assetId, rows.map((r) => ({ day: r.day, price: Number(r.price), currency: r.currency })));
   }
   // schuld (vastgoed) per asset
-  const debts = new Map<number, { day: string; debt: Decimal; currency: string }[]>();
+  const debts = new Map<number, { day: string; debt: number; currency: string }[]>();
   for (const assetId of shownAssets) {
     if (assets.get(assetId)?.category !== "real_estate") continue;
     const rows = db.select().from(schema.valuations).where(eq(schema.valuations.assetId, assetId)).orderBy(schema.valuations.date).all();
-    debts.set(assetId, rows.map((r) => ({ day: r.date, debt: new Decimal(r.debt), currency: r.currency })));
+    debts.set(assetId, rows.map((r) => ({ day: r.date, debt: Number(r.debt), currency: r.currency })));
   }
   // wisselkoersen per valuta (1 EUR = x)
-  const fxRows = db.select().from(schema.fxRates).orderBy(schema.fxRates.date).all();
-  const fx = new Map<string, { day: string; rate: Decimal }[]>();
+  const fxRows = db.select({ date: schema.fxRates.date, currency: schema.fxRates.currency, ratePerEur: schema.fxRates.ratePerEur }).from(schema.fxRates).orderBy(schema.fxRates.date).all();
+  const fx = new Map<string, { day: string; rate: number }[]>();
   for (const r of fxRows) {
     if (!fx.has(r.currency)) fx.set(r.currency, []);
-    fx.get(r.currency)!.push({ day: r.date, rate: new Decimal(r.ratePerEur) });
+    fx.get(r.currency)!.push({ day: r.date, rate: Number(r.ratePerEur) });
   }
-  const rateOn = (ccy: string, day: string): Decimal | null => (ccy === "EUR" ? new Decimal(1) : lastOnOrBefore(fx.get(ccy) ?? [], day)?.rate ?? null);
-  // zonder BTC-koers op die dag telt het bedrag als 0 BTC; EUR en USD blijven kloppen
-  const toEurUsdBtc = (amount: Decimal, ccy: string, day: string): [Decimal, Decimal, Decimal] | null => {
-    const rC = rateOn(ccy, day);
-    const rU = rateOn("USD", day);
-    if (!rC || !rU) return null;
-    const eur = amount.div(rC);
-    return [eur, eur.mul(rU), eur.mul(rateOn(BTC, day) ?? ZERO)];
-  };
+  const rateOn = (ccy: string, day: string): number | null => (ccy === "EUR" ? 1 : lastOnOrBefore(fx.get(ccy) ?? [], day)?.rate ?? null);
 
   const firstDay = [...shown.values()].map((list) => list[0].executedAt.slice(0, 10)).sort()[0];
   let day = fromDay && fromDay > firstDay ? fromDay : firstDay;
@@ -163,23 +114,22 @@ export function computeHistory(portfolioId: number | null, fromDay?: string, fil
 
   // Per groep één keer door de transacties: een tijdlijn van de open positie na elke transactie. De dag-loop schuift
   // daarna alleen een index op; eerder werd per transactie de hele lot-berekening vanaf het begin herhaald (kwadratisch).
-  // De tijdlijnen blijven in het geheugen zolang de transacties van de groep en de BTC-reeks niet veranderen (zie
-  // cachedTimelines).
-  const fxBtcVersion = fxRows
-    .filter((r) => r.currency === BTC)
-    .map((r) => `${r.date}=${r.ratePerEur}`)
-    .join(",");
+  // De tijdlijnen blijven in het geheugen zolang de invoer van de groep niet verandert, en worden gedeeld met het
+  // overzicht (zie engineRuns in portfolio.ts).
   // engine-invoer per groep, met overboekingen tussen eigen platforms gekoppeld (zelfde koppeling als het overzicht)
   const linked = linkedEngineTxs(portfolioId == null ? txs : loadTransactions(null).filter((t) => t.assetId != null), settings.costMethod);
   const engineGroups = new Map<string, EngineTx[]>();
   for (const [k, list] of groups) {
     const ids = new Set(list.map((t) => t.id));
-    engineGroups.set(k, (linked.get(k) ?? list.map(toEngineTx)).filter((t) => ids.has(t.id)));
+    engineGroups.set(k, (linked.get(k) ?? list.map((t) => toEngineTx(t))).filter((t) => ids.has(t.id)));
   }
-  const timelines = cachedTimelines(portfolioId, settings.costMethod, engineGroups, fxBtcVersion);
-  const state = new Map<string, { idx: number; quantity: Decimal; cost: Decimal; costEur: Decimal; costUsd: Decimal; costBtc: Decimal; currency: string }>();
+  const timelines = new Map([...engineRuns(portfolioId, settings.costMethod, engineGroups)].map(([k, run]) => [k, run.steps]));
+  const state = new Map<string, { idx: number; quantity: number; cost: number; costEur: number; costUsd: number; costBtc: number; currency: string; assetId: number; btc: boolean }>();
   for (const [k, list] of shown) {
-    state.set(k, { idx: 0, quantity: ZERO, cost: ZERO, costEur: ZERO, costUsd: ZERO, costBtc: ZERO, currency: list[0].currency });
+    const assetId = list[0].assetId!;
+    const asset = assets.get(assetId);
+    // Bitcoin zelf telt 1:1 (zie isBitcoin)
+    state.set(k, { idx: 0, quantity: 0, cost: 0, costEur: 0, costUsd: 0, costBtc: 0, currency: list[0].currency, assetId, btc: asset ? isBitcoin(asset) : false });
   }
   // toestand tot en met upToDay
   const advance = (k: string, upToDay: string) => {
@@ -193,11 +143,11 @@ export function computeHistory(portfolioId: number | null, fromDay?: string, fil
     }
     if (moved) {
       const st = steps[s.idx - 1];
-      s.quantity = st.quantity;
-      s.cost = st.cost;
-      s.costEur = st.costEur;
-      s.costUsd = st.costUsd;
-      s.costBtc = st.costBtc;
+      s.quantity = st.quantity.toNumber();
+      s.cost = st.cost.toNumber();
+      s.costEur = st.costEur.toNumber();
+      s.costUsd = st.costUsd.toNumber();
+      s.costBtc = st.costBtc.toNumber();
     }
     return moved;
   };
@@ -220,52 +170,64 @@ export function computeHistory(portfolioId: number | null, fromDay?: string, fil
       day = shiftDays(day, 1);
       continue;
     }
-    let vE = ZERO;
-    let vU = ZERO;
-    let vB = ZERO;
-    let iE = ZERO;
-    let iU = ZERO;
-    let iB = ZERO;
-    for (const [k, list] of shown) {
+    // wisselkoersen van deze dag: per valuta één keer opgezocht, niet per groep
+    const rates = new Map<string, number | null>();
+    const rate = (ccy: string): number | null => {
+      if (!rates.has(ccy)) rates.set(ccy, rateOn(ccy, day));
+      return rates.get(ccy)!;
+    };
+    // zonder BTC-koers op die dag telt het bedrag als 0 BTC; EUR en USD blijven kloppen
+    const toEurUsdBtc = (amount: number, ccy: string): [number, number, number] | null => {
+      const rC = rate(ccy);
+      const rU = rate("USD");
+      if (!rC || !rU) return null;
+      const eur = amount / rC;
+      return [eur, eur * rU, eur * (rate(BTC) ?? 0)];
+    };
+    let vE = 0;
+    let vU = 0;
+    let vB = 0;
+    let iE = 0;
+    let iU = 0;
+    let iB = 0;
+    for (const k of shown.keys()) {
       advance(k, day);
       const s = state.get(k)!;
-      if (s.quantity.lte(0)) continue;
-      const assetId = list[0].assetId!;
-      const q = lastOnOrBefore(quotes.get(assetId) ?? [], day);
+      if (s.quantity <= 0) continue;
+      const q = lastOnOrBefore(quotes.get(s.assetId) ?? [], day);
       // zonder koers op die dag: waarderen tegen kostprijs
-      const conv = q ? toEurUsdBtc(s.quantity.mul(q.price), q.currency, day) : toEurUsdBtc(s.cost, s.currency, day);
+      const conv = q ? toEurUsdBtc(s.quantity * q.price, q.currency) : toEurUsdBtc(s.cost, s.currency);
       if (conv) {
-        vE = vE.plus(conv[0]);
-        vU = vU.plus(conv[1]);
-        // Bitcoin zelf telt 1:1 (zie isBitcoin)
-        vB = vB.plus(q && isBitcoin(assets.get(assetId)!) ? s.quantity : conv[2]);
+        vE += conv[0];
+        vU += conv[1];
+        vB += q && s.btc ? s.quantity : conv[2];
       }
-      const d = lastOnOrBefore(debts.get(assetId) ?? [], day);
-      if (d && d.debt.gt(0)) {
-        const conv = toEurUsdBtc(d.debt, d.currency, day);
-        if (conv) {
-          vE = vE.minus(conv[0]);
-          vU = vU.minus(conv[1]);
-          vB = vB.minus(conv[2]);
+      const d = lastOnOrBefore(debts.get(s.assetId) ?? [], day);
+      if (d && d.debt > 0) {
+        const debt = toEurUsdBtc(d.debt, d.currency);
+        if (debt) {
+          vE -= debt[0];
+          vU -= debt[1];
+          vB -= debt[2];
         }
       }
       if (settings.ignoreFx) {
-        const conv = toEurUsdBtc(s.cost, s.currency, day);
-        if (conv) {
-          iE = iE.plus(conv[0]);
-          iU = iU.plus(conv[1]);
-          iB = iB.plus(conv[2]);
+        const cost = toEurUsdBtc(s.cost, s.currency);
+        if (cost) {
+          iE += cost[0];
+          iU += cost[1];
+          iB += cost[2];
         }
       } else {
-        iE = iE.plus(s.costEur);
-        iU = iU.plus(s.costUsd);
-        iB = iB.plus(s.costBtc);
+        iE += s.costEur;
+        iU += s.costUsd;
+        iB += s.costBtc;
       }
     }
     prev = {
       date: day,
-      value: { EUR: vE.toFixed(2), USD: vU.toFixed(2), BTC: vB.toFixed(8) },
-      invested: { EUR: iE.toFixed(2), USD: iU.toFixed(2), BTC: iB.toFixed(8) },
+      value: { EUR: fixed(vE, 2), USD: fixed(vU, 2), BTC: fixed(vB, 8) },
+      invested: { EUR: fixed(iE, 2), USD: fixed(iU, 2), BTC: fixed(iB, 8) },
     };
     points.push(prev);
     day = shiftDays(day, 1);

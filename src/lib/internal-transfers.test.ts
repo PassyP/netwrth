@@ -1,13 +1,22 @@
-import { describe, it, expect, beforeAll } from "vitest";
+import { describe, it, expect, beforeAll, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "pm-transfers-"));
 
+// De rekenkern wordt bespioneerd om te zien of koppeling en lot-berekening uit het geheugen komen.
+vi.mock("./calc/engine", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./calc/engine")>();
+  return { ...actual, processTransactions: vi.fn(actual.processTransactions) };
+});
+
 import { getDb, schema } from "./db";
+import { processTransactions } from "./calc/engine";
 import { computePortfolio } from "./portfolio";
 import { computeHistory, type HistoryFilter } from "./history";
+
+const engine = vi.mocked(processTransactions);
 
 const day = (d: string, t = "10:00:00") => `${d}T${t}.000Z`;
 
@@ -74,6 +83,17 @@ describe("overboekingen tussen eigen platforms in het portfolio", () => {
     // valuta van het asset (zoals de allocatie), niet die van de transacties
     expect(end({ currency: "USD" }).invested.EUR).toBe("70000.00");
     expect(computeHistory(null, undefined, { currency: "EUR" })).toEqual([]);
+  });
+
+  it("overzicht en grafiek hergebruiken de koppeling en de lot-berekening zolang er niets verandert", () => {
+    computePortfolio(null);
+    computeHistory(null);
+    engine.mockClear();
+    computePortfolio(null);
+    computeHistory(null);
+    computeHistory(null, undefined, { platform: String(cold) });
+    expect(engine).not.toHaveBeenCalled();
+    // de volgende test haalt de opname weg: dan moet alles opnieuw (zie de verwachte kostprijs daar)
   });
 
   it("zonder tegenpartij (opname weggehaald) valt de ontvangst terug op dagkoers", () => {

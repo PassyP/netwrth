@@ -14,6 +14,7 @@ vi.mock("./calc/engine", async (importOriginal) => {
 import { getDb, schema } from "./db";
 import { processTransactions } from "./calc/engine";
 import { computeHistory, type HistoryPoint } from "./history";
+import { computePortfolio } from "./portfolio";
 import { upsertAsset, setManualPrice } from "./assets";
 import { createTransaction, updateTransaction, deleteTransaction } from "./transactions";
 import { setSetting } from "./settings";
@@ -122,5 +123,13 @@ describe("computeHistory per allocatiesegment", () => {
     // geen nieuwe lot-berekening, en het totaalbeeld komt daarna nog steeds uit de cache
     expect(computeHistory(portfolioId)).toEqual(all);
     expect(engine).not.toHaveBeenCalled();
+  });
+
+  it("het overzicht gebruikt dezelfde lot-berekening als de grafiek", () => {
+    computeHistory(portfolioId);
+    engine.mockClear();
+    const view = computePortfolio(portfolioId);
+    expect(engine).not.toHaveBeenCalled();
+    expect(view.totals.cost.EUR).toBe(last(computeHistory(portfolioId)).invested.EUR);
   });
 });

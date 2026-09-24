@@ -126,8 +126,12 @@ export function linkInternalTransfers(groups: TransferGroup[], method: CostMetho
     const next = new Map<string, EngineTx[]>();
     for (const [key, list] of base) next.set(key, list.some((t) => overrides.has(t.id)) ? list.map((t) => overrides.get(t.id) ?? t) : list);
     const sig = [...overrides.entries()].map(([id, t]) => `${id}:${t.price}:${t.currency}:${t.fxEur}:${t.fxUsd}:${t.fxBtc}`).join("|");
+    // Ontving geen enkele zender zelf een gekoppelde overboeking (geen ketting), dan blijft de invoer van de zenders
+    // gelijk en levert nog een ronde precies hetzelfde op: één doorloop is dan genoeg. Dat scheelt de helft van de
+    // rekentijd, want elke ronde rekent de lots van de zenders opnieuw door.
+    const sendersChanged = [...senders].some((key) => next.get(key) !== current.get(key));
     current = next;
-    if (sig === signature) break; // stabiel: ook kettingen (A → B → C) zijn nu doorgerekend
+    if (sig === signature || !sendersChanged) break; // stabiel: ook kettingen (A → B → C) zijn nu doorgerekend
     signature = sig;
   }
   return { txs: current, matches };

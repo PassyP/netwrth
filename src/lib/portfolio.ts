@@ -2,7 +2,7 @@ import Decimal from "decimal.js";
 import { desc, eq } from "drizzle-orm";
 import { getDb, schema } from "./db";
 import type { Asset, Platform, Transaction } from "./db/schema";
-import { processTransactions, cashFlows, type EngineTx, type EngineResult, type DisplayCurrency, type CostMethod } from "./calc/engine";
+import { processTransactions, cashFlows, type EngineTx, type EngineResult, type DisplayCurrency, type CostMethod, type PositionStep } from "./calc/engine";
 import { linkInternalTransfers, type TransferGroup } from "./calc/transfers";
 import { BTC, btcFactor, fxNowSync } from "./prices/fx";
 import { latestQuote, previousClose } from "./prices/quotes";
@@ -113,7 +113,8 @@ export function isBitcoin(a: Pick<Asset, "symbol" | "category">): boolean {
 const money = (eur: Decimal, usd: Decimal, btc: Decimal): Money => ({ EUR: eur.toFixed(2), USD: usd.toFixed(2), BTC: btc.toFixed(8) });
 const pct = (num: Decimal, den: Decimal): string => (den.eq(0) ? "0.00" : num.div(den).mul(100).toFixed(2));
 
-export function toEngineTx(t: Transaction): EngineTx {
+/** @param btcRateOn BTC-koers (1 EUR = x BTC) op of vlak vóór een datum; standaard een query per transactie (btcFactor). */
+export function toEngineTx(t: Transaction, btcRateOn?: (date: string) => Decimal | null): EngineTx {
   return {
     id: t.id,
     type: t.type,
@@ -124,7 +125,7 @@ export function toEngineTx(t: Transaction): EngineTx {
     executedAt: t.executedAt,
     fxEur: t.fxEur,
     fxUsd: t.fxUsd,
-    fxBtc: btcFactor(t.fxEur, t.currency, t.executedAt),
+    fxBtc: btcFactor(t.fxEur, t.currency, t.executedAt, btcRateOn),
   };
 }
 
@@ -141,13 +142,6 @@ interface GroupCalc {
  * mee, ook uit andere portfolios, zodat de tegenpartij van een overboeking altijd zichtbaar is.
  */
 export function linkedEngineTxs(all: Transaction[], method: CostMethod): Map<string, EngineTx[]> {
-  const byKey = new Map<string, TransferGroup>();
-  for (const t of all) {
-    if (t.assetId == null) continue;
-    const key = `${t.assetId}-${t.platformId}`;
-    if (!byKey.has(key)) byKey.set(key, { key, assetId: t.assetId, platformId: t.platformId, txs: [] });
-    byKey.get(key)!.txs.push(toEngineTx(t));
-  }
   // wallet-koppelingen met "geen kostprijs voor ontvangsten zonder tegenpartij": zulke API-ontvangsten tellen niet als inleg
   const zeroPlatforms = new Set(
     getDb()
@@ -157,8 +151,98 @@ export function linkedEngineTxs(all: Transaction[], method: CostMethod): Map<str
       .filter((c) => c.provider === "bitcoin" && c.receiptCost === "none")
       .map((c) => c.platformId)
   );
-  const zeroCostIds = new Set(all.filter((t) => zeroPlatforms.has(t.platformId) && t.type === "transfer_in" && t.source === "api" && (t.externalId ?? "").startsWith("btc:")).map((t) => t.id));
-  return linkInternalTransfers([...byKey.values()], method, { zeroCostIds }).txs;
+  const withAsset = all.filter((t) => t.assetId != null).sort((a, b) => a.id - b.id);
+  const btc = btcSeries();
+  const version = [
+    method,
+    [...zeroPlatforms].sort((a, b) => a - b).join(","),
+    btc.map((r) => `${r.date}=${r.rate}`).join(","),
+    ...withAsset.map((t) => [t.id, t.assetId, t.platformId, t.type, t.quantity, t.price, t.fee, t.currency, t.executedAt, t.fxEur, t.fxUsd, t.source, t.externalId ?? ""].join("|")),
+  ].join("\n");
+  if (linkCache?.version === version) return linkCache.txs;
+
+  // BTC-koers op of vlak vóór een datum, zoals ratePerEurSync, maar uit de al geladen reeks: een query per transactie
+  // kostte bij duizenden transacties een kwart seconde
+  const btcRateOn = (date: string): Decimal | null => {
+    let lo = 0;
+    let hi = btc.length - 1;
+    let found = -1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (btc[mid].date <= date) {
+        found = mid;
+        lo = mid + 1;
+      } else hi = mid - 1;
+    }
+    return found < 0 ? null : new Decimal(btc[found].rate);
+  };
+  const byKey = new Map<string, TransferGroup>();
+  for (const t of withAsset) {
+    const key = `${t.assetId}-${t.platformId}`;
+    if (!byKey.has(key)) byKey.set(key, { key, assetId: t.assetId!, platformId: t.platformId, txs: [] });
+    byKey.get(key)!.txs.push(toEngineTx(t, btcRateOn));
+  }
+  const zeroCostIds = new Set(withAsset.filter((t) => zeroPlatforms.has(t.platformId) && t.type === "transfer_in" && t.source === "api" && (t.externalId ?? "").startsWith("btc:")).map((t) => t.id));
+  const txs = linkInternalTransfers([...byKey.values()], method, { zeroCostIds }).txs;
+  linkCache = { version, txs };
+  return txs;
+}
+
+/**
+ * Laatste uitkomst van linkedEngineTxs. De koppeling rekent de lots van elke verzendende groep door, bij honderden
+ * verkopen met gemiddelde kostprijs al gauw een seconde, en het overzicht en de grafiek vragen haar bij elke paginalading
+ * op. Ze hangt alleen af van de transacties, de kostprijsmethode, de wallet-instelling "geen kostprijs" en de BTC-reeks
+ * (fxBtc van toEngineTx); zolang die gelijk blijven, komt ze hieruit. Lezers mogen de lijsten niet wijzigen.
+ */
+let linkCache: { version: string; txs: Map<string, EngineTx[]> } | null = null;
+
+/** De BTC-reeks (1 EUR = x BTC) op datum, oplopend: fxBtc van elke transactie hangt ervan af (btcFactor). */
+function btcSeries(): { date: string; rate: string }[] {
+  return getDb().select({ date: schema.fxRates.date, rate: schema.fxRates.ratePerEur }).from(schema.fxRates).where(eq(schema.fxRates.currency, BTC)).orderBy(schema.fxRates.date).all();
+}
+
+export interface EngineRun {
+  result: EngineResult;
+  /** open positie na elke dag met transacties: de tijdlijn van de historiegrafiek */
+  steps: PositionStep[];
+}
+
+/** Versie van engine-invoer: precies de velden die processTransactions ziet, op id gesorteerd. */
+function engineVersion(txs: EngineTx[]): string {
+  return txs
+    .slice()
+    .sort((a, b) => a.id - b.id)
+    .map((t) => [t.id, t.type, t.quantity, t.price, t.fee, t.currency, t.executedAt, t.fxEur, t.fxUsd, t.fxBtc ?? "", t.internal ? "i" : ""].join("|"))
+    .join("\n");
+}
+
+const runCache = new Map<string, Map<string, { version: string; run: EngineRun }>>();
+
+/**
+ * processTransactions per groep (asset+platform), met geheugen tussen verzoeken. Bij honderden verkopen met gemiddelde
+ * kostprijs kost één groep honderden ms, en het overzicht (uitkomst) en de grafiek (tijdlijn) vragen bij elke
+ * paginalading dezelfde groepen op: één doorloop levert beide. Sleutel: bereik (portfolio of alles) en methode; per groep
+ * een versie met precies de invoer van de rekenkern, zodat een nieuwe, gewijzigde of verwijderde transactie alleen die
+ * groep opnieuw laat rekenen. Groepen die niet meer meegegeven worden, vallen weg. Lezers mogen de uitkomsten niet
+ * wijzigen.
+ */
+export function engineRuns(portfolioId: number | null, method: CostMethod, groups: Map<string, EngineTx[]>): Map<string, EngineRun> {
+  const scope = `${portfolioId ?? "all"}|${method}`;
+  const known = runCache.get(scope);
+  const kept = new Map<string, { version: string; run: EngineRun }>();
+  const runs = new Map<string, EngineRun>();
+  for (const [key, list] of groups) {
+    const version = engineVersion(list);
+    let entry = known?.get(key);
+    if (!entry || entry.version !== version) {
+      const steps: PositionStep[] = [];
+      entry = { version, run: { result: processTransactions(list, method, (st) => steps.push(st)), steps } };
+    }
+    kept.set(key, entry);
+    runs.set(key, entry.run);
+  }
+  runCache.set(scope, kept);
+  return runs;
 }
 
 export function loadTransactions(portfolioId: number | null): Transaction[] {
@@ -221,9 +305,14 @@ export function computePortfolio(portfolioId: number | null, settingsOverride?: 
 
   // overboekingen tussen eigen platforms: de kostprijs verhuist mee; de tegenpartij kan in een ander portfolio staan
   const linked = linkedEngineTxs(portfolioId == null ? txs : loadTransactions(null), settings.costMethod);
+  const engineInput = new Map<string, EngineTx[]>();
   for (const [key, g] of groups) {
     const ids = new Set(g.txs.map((t) => t.id));
-    g.result = processTransactions((linked.get(key) ?? g.txs.map(toEngineTx)).filter((t) => ids.has(t.id)), settings.costMethod);
+    engineInput.set(key, (linked.get(key) ?? g.txs.map((t) => toEngineTx(t))).filter((t) => ids.has(t.id)));
+  }
+  const runs = engineRuns(portfolioId, settings.costMethod, engineInput);
+  for (const [key, g] of groups) {
+    g.result = runs.get(key)!.result;
     const r = g.result;
     const a = g.asset;
     const q = latestQuote(a.id);
@@ -439,7 +528,9 @@ export function computePortfolio(portfolioId: number | null, settingsOverride?: 
   }
   for (const [pid, list] of byPlatform) {
     if (!list.some((t) => t.type === "deposit" || t.type === "withdrawal")) continue; // alleen platforms waar je kas bijhoudt
-    const flows = cashFlows(list.map(toEngineTx));
+    // cashFlows kijkt alleen naar type, aantal, prijs, kosten en valuta; toEngineTx zou per transactie een BTC-koers
+    // opzoeken (btcFactor), bij duizenden transacties het grootste deel van dit verzoek
+    const flows = cashFlows(list);
     for (const [ccy, amt] of Object.entries(flows)) {
       if (amt.abs().lt("0.005")) continue;
       cash.push({ platformId: pid, platformName: platforms.get(pid)?.name ?? "?", currency: ccy, amount: amt.toFixed(2) });

@@ -1,7 +1,7 @@
 import Decimal from "decimal.js";
 import { eq } from "drizzle-orm";
 import { getDb, schema } from "./db";
-import type { Transaction } from "./db/schema";
+import type { Asset, Transaction } from "./db/schema";
 import { processTransactions, type CostMethod, type EngineTx, type PositionStep } from "./calc/engine";
 import { loadTransactions, toEngineTx, computePortfolio, isBitcoin, linkedEngineTxs, type Money } from "./portfolio";
 import { getSettings } from "./settings";
@@ -11,6 +11,29 @@ export interface HistoryPoint {
   date: string;
   value: Money;
   invested: Money;
+}
+
+/**
+ * Eén segment van de allocatie: `key` is de sleutel van dat segment (categorie, platform-id, valuta van het asset of
+ * asset-id), zodat de grafiek precies de posities volgt die bij een aangeklikt stuk van de donut horen.
+ */
+export const HISTORY_FILTERS = ["category", "platform", "currency", "asset"] as const;
+export interface HistoryFilter {
+  by: (typeof HISTORY_FILTERS)[number];
+  key: string;
+}
+
+function inFilter(filter: HistoryFilter, t: Transaction, asset: Asset | undefined): boolean {
+  switch (filter.by) {
+    case "category":
+      return asset?.category === filter.key;
+    case "platform":
+      return String(t.platformId) === filter.key;
+    case "currency":
+      return asset?.currency === filter.key;
+    case "asset":
+      return String(t.assetId) === filter.key;
+  }
 }
 
 const ZERO = new Decimal(0);
@@ -87,8 +110,9 @@ function cachedTimelines(portfolioId: number | null, method: CostMethod, groups:
 /**
  * Waarde en inleg per dag, berekend uit transacties, dagslotkoersen en ECB-koersen.
  * Inleg = kostprijs van de open lots op die dag (historische wisselkoers, of koers van de dag bij ignoreFx).
+ * Met `filter` alleen de groepen van één allocatiesegment; de reeks begint dan bij de eerste transactie daarvan.
  */
-export function computeHistory(portfolioId: number | null, fromDay?: string): HistoryPoint[] {
+export function computeHistory(portfolioId: number | null, fromDay?: string, filter?: HistoryFilter): HistoryPoint[] {
   const db = getDb();
   const settings = getSettings();
   const txs = loadTransactions(portfolioId).filter((t) => t.assetId != null);
@@ -103,16 +127,21 @@ export function computeHistory(portfolioId: number | null, fromDay?: string): Hi
     groups.get(k)!.push(t);
   }
   for (const list of groups.values()) list.sort((a, b) => (a.executedAt < b.executedAt ? -1 : 1));
+  // De groepen die in de grafiek meetellen. De tijdlijnen worden wel voor alle groepen opgevraagd (cachedTimelines
+  // bewaart per bereik alleen wat je meegeeft), zodat een gefilterde grafiek de cache van het totaalbeeld niet leegt.
+  const shown = filter ? new Map([...groups].filter(([, list]) => inFilter(filter, list[0], assets.get(list[0].assetId!)))) : groups;
+  if (shown.size === 0) return [];
+  const shownAssets = new Set([...shown.values()].map((list) => list[0].assetId!));
 
   // koersen per asset
   const quotes = new Map<number, { day: string; price: Decimal; currency: string }[]>();
-  for (const assetId of new Set(txs.map((t) => t.assetId!))) {
+  for (const assetId of shownAssets) {
     const rows = db.select().from(schema.priceQuotes).where(eq(schema.priceQuotes.assetId, assetId)).orderBy(schema.priceQuotes.day).all();
     quotes.set(assetId, rows.map((r) => ({ day: r.day, price: new Decimal(r.price), currency: r.currency })));
   }
   // schuld (vastgoed) per asset
   const debts = new Map<number, { day: string; debt: Decimal; currency: string }[]>();
-  for (const assetId of new Set(txs.map((t) => t.assetId!))) {
+  for (const assetId of shownAssets) {
     if (assets.get(assetId)?.category !== "real_estate") continue;
     const rows = db.select().from(schema.valuations).where(eq(schema.valuations.assetId, assetId)).orderBy(schema.valuations.date).all();
     debts.set(assetId, rows.map((r) => ({ day: r.date, debt: new Decimal(r.debt), currency: r.currency })));
@@ -134,7 +163,7 @@ export function computeHistory(portfolioId: number | null, fromDay?: string): Hi
     return [eur, eur.mul(rU), eur.mul(rateOn(BTC, day) ?? ZERO)];
   };
 
-  const firstDay = txs.map((t) => t.executedAt.slice(0, 10)).sort()[0];
+  const firstDay = [...shown.values()].map((list) => list[0].executedAt.slice(0, 10)).sort()[0];
   let day = fromDay && fromDay > firstDay ? fromDay : firstDay;
   const end = todayStr();
   const points: HistoryPoint[] = [];
@@ -156,7 +185,7 @@ export function computeHistory(portfolioId: number | null, fromDay?: string): Hi
   }
   const timelines = cachedTimelines(portfolioId, settings.costMethod, engineGroups, fxBtcVersion);
   const state = new Map<string, { idx: number; quantity: Decimal; cost: Decimal; costEur: Decimal; costUsd: Decimal; costBtc: Decimal; currency: string }>();
-  for (const [k, list] of groups) {
+  for (const [k, list] of shown) {
     state.set(k, { idx: 0, quantity: ZERO, cost: ZERO, costEur: ZERO, costUsd: ZERO, costBtc: ZERO, currency: list[0].currency });
   }
   // toestand tot en met upToDay
@@ -179,12 +208,12 @@ export function computeHistory(portfolioId: number | null, fromDay?: string): Hi
     }
     return moved;
   };
-  if (day > firstDay) for (const k of groups.keys()) advance(k, shiftDays(day, -1));
+  if (day > firstDay) for (const k of shown.keys()) advance(k, shiftDays(day, -1));
 
   // Dagen waarop de uitkomst kan veranderen: een transactie, koers, wisselkoers of waardering. Op alle andere dagen is
   // het punt gelijk aan dat van de dag ervoor en wordt het gekopieerd in plaats van opnieuw berekend.
   const eventDays = new Set<string>();
-  for (const steps of timelines.values()) for (const st of steps) eventDays.add(st.executedAt.slice(0, 10));
+  for (const k of shown.keys()) for (const st of timelines.get(k)!) eventDays.add(st.executedAt.slice(0, 10));
   for (const rows of quotes.values()) for (const r of rows) eventDays.add(r.day);
   for (const rows of debts.values()) for (const r of rows) eventDays.add(r.day);
   for (const r of fxRows) eventDays.add(r.date);
@@ -204,7 +233,7 @@ export function computeHistory(portfolioId: number | null, fromDay?: string): Hi
     let iE = ZERO;
     let iU = ZERO;
     let iB = ZERO;
-    for (const [k, list] of groups) {
+    for (const [k, list] of shown) {
       advance(k, day);
       const s = state.get(k)!;
       if (s.quantity.lte(0)) continue;

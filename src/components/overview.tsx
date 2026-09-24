@@ -5,20 +5,19 @@ import { useMemo, useState } from "react";
 import { Plus, AlertTriangle } from "lucide-react";
 import { useApi, useApp } from "./app-state";
 import { Card, Money, Gain, Skeleton, Empty, AssetLogo, RangePills, Price, Qty, Pct, colorFor, timeAgo } from "./ui";
-import { ValueChart, Donut, type HistoryPointView } from "./charts";
+import { ValueChart, Donut, HISTORY_RANGES, type HistoryPointView, type HistoryRange } from "./charts";
 import { TransactionForm } from "./transaction-form";
 import type { ConnectionRow } from "./connections";
 import type { PortfolioView, PositionView } from "@/lib/portfolio";
 import { CATEGORY_LABELS, CATEGORY_COLORS, dustAmount, dustLabel, isDust } from "@/lib/format";
 
-const RANGES = ["1D", "1W", "1M", "3M", "1J", "Alles"] as const;
 const CATEGORY_ORDER = ["crypto", "stock", "etf", "commodity", "real_estate"];
 
 export function Overview() {
   const { portfolioId, currency, bump } = useApp();
   const pid = portfolioId == null ? "all" : String(portfolioId);
   const { data, error } = useApi<PortfolioView>(`/api/portfolio?portfolioId=${pid}`);
-  const [range, setRange] = useState<(typeof RANGES)[number]>("Alles");
+  const [range, setRange] = useState<HistoryRange>("Alles");
   const { data: history } = useApi<HistoryPointView[]>(`/api/history?portfolioId=${pid}&range=${range}`);
   const { data: connections } = useApi<ConnectionRow[]>("/api/connections");
   const linkedPlatforms = useMemo(() => new Set((connections ?? []).map((c) => c.platformId)), [connections]);
@@ -137,16 +136,8 @@ export function Overview() {
 
       {/* Grafiek + allocatie */}
       <div className="grid gap-4 lg:grid-cols-5">
-        <Card className="lg:col-span-3" title="Waarde vs. inleg" action={<RangePills value={range} options={RANGES} onChange={setRange} />}>
-          {history ? <ValueChart points={history} /> : <Skeleton className="h-60" />}
-          <div className="mt-2 flex gap-4 text-xs text-muted">
-            <span className="flex items-center gap-1">
-              <span className="inline-block h-2 w-4 rounded bg-up" /> Waarde
-            </span>
-            <span className="flex items-center gap-1">
-              <span className="inline-block h-0.5 w-4 border-t border-dashed border-muted" /> Inleg
-            </span>
-          </div>
+        <Card className="lg:col-span-3" title="Waarde vs. inleg" action={<RangePills value={range} options={HISTORY_RANGES} onChange={setRange} />}>
+          {history ? <ValueChart points={history} legend /> : <Skeleton className="h-60" />}
         </Card>
         <Card className="lg:col-span-2" title="Allocatie" action={<Link href="/allocation" className="tap text-xs font-semibold text-accent">Alles</Link>}>
           {data ? <Donut slices={data.allocation.byCategory} colorKey="category" selected={category} onSelect={(k) => setCategory(k)} layout="column" /> : <Skeleton className="h-48" />}

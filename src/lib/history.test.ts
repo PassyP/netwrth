@@ -93,3 +93,29 @@ describe("computeHistory hergebruikt de tijdlijnen per groep", () => {
     expect(engine).toHaveBeenCalledTimes(11);
   });
 });
+
+describe("computeHistory per allocatiesegment", () => {
+  it("telt alleen de groepen van het segment en gebruikt de tijdlijnen van het totaalbeeld", () => {
+    const all = computeHistory(portfolioId);
+    engine.mockClear();
+
+    const onlyAapl = computeHistory(portfolioId, undefined, { by: "asset", key: String(aapl) });
+    expect(onlyAapl[0].date).toBe("2026-01-05");
+    expect(last(onlyAapl).invested.EUR).toBe("310.00"); // 200 + 110
+    expect(last(onlyAapl).value.EUR).toBe("390.00"); // 3 × 130
+    const onlyMsft = computeHistory(portfolioId, undefined, { by: "asset", key: String(msft) });
+    expect(onlyMsft[0].date).toBe("2026-01-10"); // begint bij de eerste transactie van het segment
+    expect(last(onlyMsft).invested.EUR).toBe("100.00");
+    expect(computeHistory(portfolioId, "2026-02-15", { by: "asset", key: String(msft) })[0].date).toBe("2026-02-15");
+
+    // beide aandelen, één platform, allebei in euro: categorie, platform en valuta omvatten hier alles
+    expect(computeHistory(portfolioId, undefined, { by: "category", key: "stock" })).toEqual(all);
+    expect(computeHistory(portfolioId, undefined, { by: "platform", key: String(platformId) })).toEqual(all);
+    expect(computeHistory(portfolioId, undefined, { by: "currency", key: "EUR" })).toEqual(all);
+    expect(computeHistory(portfolioId, undefined, { by: "category", key: "crypto" })).toEqual([]);
+
+    // geen nieuwe lot-berekening, en het totaalbeeld komt daarna nog steeds uit de cache
+    expect(computeHistory(portfolioId)).toEqual(all);
+    expect(engine).not.toHaveBeenCalled();
+  });
+});

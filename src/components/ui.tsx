@@ -130,7 +130,8 @@ export function AssetLogo({ symbol, logoUrl, category, size = 36 }: { symbol: st
 
 const FOCUSABLE = 'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),summary,[tabindex]:not([tabindex="-1"])';
 
-export function Modal({ open, onClose, title, children, wide = false }: { open: boolean; onClose: () => void; title: string; children: React.ReactNode; wide?: boolean }) {
+/** `footer` (bijv. Annuleren/Opslaan) blijft onderaan staan terwijl de inhoud erboven scrolt: bij een lang formulier blijft opslaan bereikbaar. */
+export function Modal({ open, onClose, title, children, wide = false, footer }: { open: boolean; onClose: () => void; title: string; children: React.ReactNode; wide?: boolean; footer?: React.ReactNode }) {
   const titleId = useId();
   const panel = useRef<HTMLDivElement>(null);
   // via een ref: een nieuwe onClose bij elke render van de ouder mag de focus niet laten verspringen
@@ -177,7 +178,7 @@ export function Modal({ open, onClose, title, children, wide = false }: { open: 
         aria-modal="true"
         aria-labelledby={titleId}
         tabIndex={-1}
-        className={`card max-h-[92dvh] w-full overflow-y-auto rounded-b-none p-5 pb-[calc(1.25rem+env(safe-area-inset-bottom))] outline-none sm:rounded-2xl sm:pb-5 ${wide ? "sm:max-w-3xl" : "sm:max-w-lg"}`}
+        className={`card max-h-[92dvh] w-full overflow-y-auto rounded-b-none p-5 outline-none sm:rounded-2xl ${footer ? "pb-0" : "pb-[calc(1.25rem+env(safe-area-inset-bottom))] sm:pb-5"} ${wide ? "sm:max-w-3xl" : "sm:max-w-lg"}`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-4 flex items-center justify-between">
@@ -189,6 +190,10 @@ export function Modal({ open, onClose, title, children, wide = false }: { open: 
           </button>
         </div>
         {children}
+        {footer && (
+          // sticky in het scrollende paneel (dat daarom onder geen padding heeft); de voet brengt zijn eigen marge en safe area mee
+          <div className="sticky bottom-0 -mx-5 mt-4 border-t border-border bg-card px-5 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] sm:pb-4">{footer}</div>
+        )}
       </div>
     </div>
   );

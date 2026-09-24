@@ -90,6 +90,11 @@ describe("esplora-client", () => {
     node.addressStatus = null;
     node.down = true;
     await expect(client.tipHeight()).rejects.toThrow(/niet bereikbaar.*ECONNREFUSED/);
+    // .local-naam in een container: uitleg met het Umbrel-IP, zowel bij onbekende host als bij geweigerde verbinding
+    for (const code of ["ENOTFOUND", "ECONNREFUSED"]) {
+      const local = makeEsploraClient({ baseUrl: "http://umbrel.local:3006", fetchImpl: async () => { const e = new TypeError("fetch failed"); (e as { cause?: unknown }).cause = { code }; throw e; } });
+      await expect(local.tipHeight()).rejects.toThrow(/Umbrel-app.*10\.21\.21\.26:3006/);
+    }
     // time-out: aparte, uitlegbare melding (geen herhaling in deze test: retries 0)
     const slow = makeEsploraClient({ baseUrl: "http://slow.test", fetchImpl: async () => { const e = new DOMException("The operation was aborted due to timeout", "TimeoutError"); throw e; }, retries: 0 });
     await expect(slow.tipHeight()).rejects.toThrow(/antwoordt niet binnen 15 s.*remt dit IP af/);

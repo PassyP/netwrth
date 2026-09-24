@@ -28,7 +28,8 @@ describe("bitcoin-node keuze", () => {
     own.down = true;
     const n = await connectBitcoinNode({ bitcoinApiUrl: "http://umbrel.local:3006", bitcoinFallbackEnabled: true, bitcoinFallbackUrl: "https://mempool.space/" }, fetchImpl);
     expect(n).toMatchObject({ source: "fallback", tipHeight: 800001 });
-    expect(n.warnings[0]).toMatch(/Eigen node onbereikbaar \(Bitcoin-node niet bereikbaar op umbrel.local:3006 \(ECONNREFUSED\)\.\); teruggevallen op de publieke node mempool.space/);
+    // een .local-naam in een container krijgt de uitleg met het Umbrel-IP mee; daarna de terugvalmelding
+    expect(n.warnings[0]).toMatch(/^Eigen node onbereikbaar \(Bitcoin-node umbrel.local:3006 niet bereikbaar \(ECONNREFUSED\).*10\.21\.21\.26:3006\.\); teruggevallen op de publieke node mempool.space/);
     expect(n.warnings[0]).toContain("ziet de adressen van je wallet");
     expect(pub.calls).toContain("/api/blocks/tip/height");
   });
@@ -36,7 +37,7 @@ describe("bitcoin-node keuze", () => {
   it("eigen node onbereikbaar en terugval uit → fout van de eigen node", async () => {
     const { own, pub, fetchImpl } = twoNodes();
     own.down = true;
-    await expect(connectBitcoinNode({ bitcoinApiUrl: "http://umbrel.local:3006", bitcoinFallbackEnabled: false, bitcoinFallbackUrl: "https://mempool.space" }, fetchImpl)).rejects.toThrow(/niet bereikbaar op umbrel.local:3006/);
+    await expect(connectBitcoinNode({ bitcoinApiUrl: "http://umbrel.local:3006", bitcoinFallbackEnabled: false, bitcoinFallbackUrl: "https://mempool.space" }, fetchImpl)).rejects.toThrow(/umbrel.local:3006 niet bereikbaar \(ECONNREFUSED\).*Umbrel-app/);
     expect(pub.calls).toEqual([]);
   });
 

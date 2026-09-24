@@ -159,6 +159,10 @@ export function makeEsploraClient(opts: EsploraClientOptions): EsploraClient {
       }
       if (cause === "TimeoutError")
         throw new EsploraError(`Bitcoin-node ${host} antwoordt niet binnen ${Math.round(timeoutMs / 1000)} s (time-out): de node is traag of remt dit IP af; publieke nodes doen dat na veel verzoeken. Probeer het later opnieuw of kies een andere node.`, null, "timeout");
+      // .local-namen (Bonjour/mDNS) werken alleen op de eigen computer: in een container (Umbrel-app) zijn ze onbekend of
+      // wijzen ze naar de container zelf, waar niets op de poort luistert
+      if ((cause === "ENOTFOUND" || cause === "ECONNREFUSED") && /\.local(:\d+)?$/i.test(host))
+        throw new EsploraError(`Bitcoin-node ${host} niet bereikbaar (${cause}): een .local-naam werkt niet binnen een container zoals de Umbrel-app. Gebruik daar het IP-adres; voor de mempool-app op Umbrel is dat http://10.21.21.26:3006.`, null, "network");
       throw new EsploraError(`Bitcoin-node niet bereikbaar op ${host} (${cause}).`, null, "network");
     }
     if (res.status === 429 && attempt < 5) {

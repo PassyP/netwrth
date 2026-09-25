@@ -2,6 +2,17 @@
 
 Persoonlijke portfolio-tracker in Delta-stijl: crypto, aandelen, ETF's, grondstoffen en fysiek vastgoed in meerdere portfolios, met koersen via de eToro Public API, Kraken en Yahoo Finance, ECB-wisselkoersen, winst/verlies per aankoop, allocatie, alerts en import van Swissquote/eToro-exports. Alles draait lokaal in één Docker-container; de data blijft op je eigen server (Umbrel Home).
 
+<p align="center">
+  <img src="docs/screenshots/overzicht.png" alt="Overzicht met totale waarde, grafiek van waarde tegenover inleg en allocatie" width="76%">
+  <img src="docs/screenshots/mobiel.png" alt="Hetzelfde overzicht op een telefoon" width="22%">
+</p>
+<p align="center">
+  <img src="docs/screenshots/asset.png" alt="Assetpagina met koersgrafiek, positie en winst/verlies per aankoop" width="34%">
+  <img src="docs/screenshots/allocatie.png" alt="Allocatie per categorie met grafiek van waarde tegenover inleg" width="34%">
+  <img src="docs/screenshots/transactie.png" alt="Formulier om een transactie toe te voegen" width="29.5%">
+</p>
+<p align="center"><sub>Overzicht (ook op je telefoon), een assetpagina, allocatie en een transactie toevoegen. Alle screenshots tonen een fictief demoportfolio.</sub></p>
+
 Gebouwd volgens het spec-doc *Portfolio Manager – Spec* (v1).
 
 ## Functies (v1)
